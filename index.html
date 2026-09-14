@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#F5F0E4" />
+  <title>동네 한바퀴 · NFC 쿠폰 도장</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app" id="app"><!-- JS가 렌더링 --></div>
+
+  <div class="toast-host" id="toastHost"></div>
+  <div class="modal-host" id="modalHost"></div>
+
+  <!-- Supabase 클라이언트 + 설정, 그 다음 데이터 레이어·스캔 모듈·화면 로직 -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="supabase-config.js"></script>
+  <script src="db.js"></script>
+  <script src="vendor/jsqr.min.js"></script>
+  <script src="scan.js"></script>
+  <script src="app.js"></script>
+  <script>window.initUserApp && window.initUserApp();</script>
+</body>
+</html>
