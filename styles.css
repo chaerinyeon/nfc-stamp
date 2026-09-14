@@ -405,3 +405,28 @@ button, input, select { font-family: inherit; }
 @media (prefers-reduced-motion: reduce) { .nfc-pulse { animation: none; } }
 
 .spacer-8 { height: 8px; } .spacer-16 { height: 16px; }
+
+/* ---------------------------------------------------------- 적립 프로그램(캠페인) */
+.program-wallet .wallet-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.program-wallet .tt { font-size: 15px; }
+.program-wallet .desc { font-size: 12.5px; color: var(--text-2); margin: 2px 0 10px; }
+.tiers-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.tier-chip {
+  font-size: 12px; font-weight: 700; padding: 6px 10px; border-radius: 999px;
+  background: var(--surface-alt); border: 1px solid var(--line); color: var(--text-2);
+}
+.tier-chip.ready { background: var(--accent-soft); color: var(--accent-strong); border-color: var(--accent); }
+.tier-chip.done { background: #E1F0E4; color: #2C7A43; border-color: #2C7A43; }
+
+.program-card { display: flex; flex-direction: column; gap: 8px; }
+.program-card .stores { font-size: 12px; color: var(--text-2); }
+.program-card .join-row { display: flex; justify-content: flex-end; margin-top: 4px; }
+.program-card .badge.joined { background: #E1F0E4; color: #2C7A43; }
+
+.join-prompt-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 10px 0; border-top: 1px dashed var(--line);
+}
+.join-prompt-row .name { font-size: 13.5px; font-weight: 700; }
+.join-prompt-row .sub { font-size: 12px; color: var(--text-2); }
+

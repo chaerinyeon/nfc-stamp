@@ -9,10 +9,10 @@
   'use strict';
 
   var SESS_KEY = 'nfc_admin_session';
-  var TABS_MASTER = ['dashboard', 'stores', 'stamps', 'coupons', 'reset'];
+  var TABS_MASTER = ['dashboard', 'programs', 'stores', 'stamps', 'coupons', 'reset'];
   var TABS_STORE = ['mystore', 'stamps', 'coupons'];
   var TAB_LABELS = {
-    dashboard: '대시보드', stores: '매장 관리', stamps: '적립 내역',
+    dashboard: '대시보드', programs: '프로그램 관리', stores: '매장 관리', stamps: '적립 내역',
     coupons: '쿠폰 관리', reset: '초기화', mystore: '내 매장'
   };
   var state = { tab: null };
@@ -232,6 +232,7 @@
   async function renderBody() {
     var body = document.getElementById('adminBody');
     if (state.tab === 'dashboard') return renderDashboard(body);
+    if (state.tab === 'programs') return renderPrograms(body);
     if (state.tab === 'stores') return renderStores(body);
     if (state.tab === 'mystore') return renderMyStore(body);
     if (state.tab === 'stamps') return renderStamps(body);
@@ -294,6 +295,151 @@
   }
   function stat(v, k, apri) {
     return '<div class="stat ' + (apri ? 'apri' : '') + '"><div class="v">' + v + '</div><div class="k">' + k + '</div></div>';
+  }
+
+  /* ------------------------------------------------- 프로그램(캠페인) 관리 (총괄 전용) */
+  async function renderPrograms(body) {
+    var [programs, stores] = await Promise.all([DB.getPrograms(), DB.getStores()]);
+    var storeById = {}; stores.forEach(function (s) { storeById[s.id] = s; });
+    var html = '<button class="btn accent" id="addProgram" style="margin-bottom:12px">+ 프로그램 추가</button>';
+    for (var i = 0; i < programs.length; i++) {
+      var p = programs[i];
+      var stats = await DB.getProgramStats(p.id);
+      var storeNames = p.storeIds.map(function (id) { return storeById[id] ? storeById[id].name : id; }).join(', ');
+      var tiersText = p.tiers.map(function (t) { return t.threshold + '개→' + t.couponTitle; }).join(' / ');
+      html += '<div class="trow">' +
+          '<div class="th"><div class="tt">' + esc(p.name) + '</div>' +
+            (p.active ? '<span class="badge green">운영중</span>' : '<span class="badge gray">중지</span>') + '</div>' +
+          '<div class="kv">' +
+            '<span>범위 <b>' + (p.scope === 'alliance' ? '공동적립' : '단일매장') + '</b></span>' +
+            '<span>대상 매장 <b>' + esc(storeNames || '-') + '</b></span>' +
+            '<span>참여자 <b>' + stats.participants + '</b>명</span>' +
+            '<span>발급 쿠폰 <b>' + stats.couponsIssued + '</b>건</span>' +
+          '</div>' +
+          '<div class="kv"><span>단계 <b>' + esc(tiersText || '-') + '</b></span></div>' +
+          '<div class="acts">' +
+            '<button class="btn secondary sm" data-edit-prog="' + p.id + '">정보 수정</button>' +
+            '<button class="btn ghost sm" data-toggle-prog="' + p.id + '">' + (p.active ? '운영 중지' : '운영 시작') + '</button>' +
+          '</div>' +
+        '</div>';
+    }
+    body.innerHTML = html;
+    document.getElementById('addProgram').onclick = function () { programForm(null); };
+    body.querySelectorAll('[data-edit-prog]').forEach(function (b) {
+      b.onclick = function () {
+        var p = programs.filter(function (x) { return x.id === b.getAttribute('data-edit-prog'); })[0];
+        programForm(p);
+      };
+    });
+    body.querySelectorAll('[data-toggle-prog]').forEach(function (b) {
+      b.onclick = async function () {
+        var id = b.getAttribute('data-toggle-prog');
+        var p = programs.filter(function (x) { return x.id === id; })[0];
+        var ok = await DB.adminSetProgramActive(id, getSession().password, !p.active);
+        if (!ok) { toast('처리에 실패했습니다.', 'err'); return; }
+        toast('운영 상태를 변경했습니다.', 'ok');
+        renderPrograms(body);
+      };
+    });
+  }
+
+  function programForm(program) {
+    var editing = !!program;
+    var tiers = editing
+      ? program.tiers.map(function (t) { return { threshold: t.threshold, couponTitle: t.couponTitle, benefit: t.benefit }; })
+      : [{ threshold: 10, couponTitle: '', benefit: '' }];
+    var selectedStores = editing ? program.storeIds.slice() : [];
+
+    DB.getStores().then(function (stores) {
+      modal({
+        emoji: editing ? '✏️' : '🗂️',
+        title: editing ? '프로그램 수정' : '프로그램 추가',
+        formHTML:
+          '<div style="text-align:left;margin-top:8px">' +
+            '<div class="field"><label>프로그램명</label><input class="input" id="pgName" value="' + (editing ? esc(program.name) : '') + '" placeholder="예: 성수 카페 단골적립" /></div>' +
+            '<div class="field"><label>설명</label><input class="input" id="pgDesc" value="' + (editing ? esc(program.description) : '') + '" placeholder="선택 사항" /></div>' +
+            '<div class="field"><label>범위</label><select class="input" id="pgScope">' +
+              '<option value="single_store"' + ((!editing || program.scope === 'single_store') ? ' selected' : '') + '>단일 매장</option>' +
+              '<option value="alliance"' + (editing && program.scope === 'alliance' ? ' selected' : '') + '>제휴 공동적립</option>' +
+            '</select></div>' +
+            '<div class="field"><label>대상 매장</label><div id="pgStores">' +
+              stores.map(function (s) {
+                var checked = selectedStores.indexOf(s.id) !== -1 ? ' checked' : '';
+                return '<label style="display:flex;align-items:center;gap:8px;padding:6px 0"><input type="checkbox" value="' + esc(s.id) + '"' + checked + ' /> ' + esc(s.name) + '</label>';
+              }).join('') +
+            '</div></div>' +
+            '<div class="field"><label>쿠폰 유효기간(일)</label><input class="input" id="pgValidity" type="number" min="1" value="' + (editing ? program.validityDays : 30) + '" /></div>' +
+            '<div class="field"><label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="pgReset"' + (editing && program.resetOnTier ? ' checked' : '') + ' /> 단계 달성 시 초과분만 남기고 초기화(반복형)</label></div>' +
+            '<div class="field"><label>단계(티어)</label><div id="pgTiers"></div>' +
+              '<button type="button" class="btn ghost sm" id="pgAddTier" style="margin-top:6px">+ 단계 추가</button></div>' +
+          '</div>',
+        confirm: editing ? '저장' : '추가', confirmClass: 'accent', cancel: '취소',
+        onConfirm: async function (close) {
+          var name = document.getElementById('pgName').value;
+          var description = document.getElementById('pgDesc').value;
+          var scope = document.getElementById('pgScope').value;
+          var validityDays = parseInt(document.getElementById('pgValidity').value, 10) || 30;
+          var resetOnTier = document.getElementById('pgReset').checked;
+          var storeIds = Array.prototype.map.call(
+            document.querySelectorAll('#pgStores input[type=checkbox]:checked'),
+            function (el) { return el.value; }
+          );
+          if (!name.trim()) { toast('프로그램명을 입력해 주세요.', 'warn'); return; }
+          if (storeIds.length === 0) { toast('대상 매장을 1곳 이상 선택해 주세요.', 'warn'); return; }
+          if (tiers.length === 0) { toast('단계를 1개 이상 추가해 주세요.', 'warn'); return; }
+          for (var i = 0; i < tiers.length; i++) {
+            if (!tiers[i].threshold || !tiers[i].couponTitle.trim()) { toast('단계 정보를 모두 입력해 주세요.', 'warn'); return; }
+          }
+          var payload = { name: name, description: description, scope: scope, storeIds: storeIds, tiers: tiers, validityDays: validityDays, resetOnTier: resetOnTier };
+          var sess = getSession();
+          if (editing) {
+            payload.active = program.active;
+            var res = await DB.adminUpdateProgram(sess.password, program.id, payload);
+            close();
+            if (!res.ok) { toast(res.message, 'err'); return; }
+            toast('프로그램을 수정했습니다.', 'ok');
+          } else {
+            var res2 = await DB.adminCreateProgram(sess.password, payload);
+            close();
+            if (!res2.ok) { toast(res2.message, 'err'); return; }
+            toast('프로그램을 추가했습니다.', 'ok');
+          }
+          renderPrograms(document.getElementById('adminBody'));
+        },
+        afterOpen: function () {
+          function renderTiers() {
+            var host = document.getElementById('pgTiers');
+            host.innerHTML = tiers.map(function (t, i) {
+              return '<div style="display:flex;gap:6px;margin-bottom:6px">' +
+                '<input class="input" style="flex:0 0 70px" type="number" min="1" placeholder="개수" value="' + (t.threshold || '') + '" data-tf="threshold" data-i="' + i + '" />' +
+                '<input class="input" style="flex:1" placeholder="쿠폰명" value="' + esc(t.couponTitle || '') + '" data-tf="couponTitle" data-i="' + i + '" />' +
+                '<input class="input" style="flex:1" placeholder="혜택 설명" value="' + esc(t.benefit || '') + '" data-tf="benefit" data-i="' + i + '" />' +
+                (tiers.length > 1 ? '<button type="button" class="btn ghost sm" data-tier-del="' + i + '">✕</button>' : '') +
+              '</div>';
+            }).join('');
+            host.querySelectorAll('[data-tf]').forEach(function (el) {
+              el.oninput = function () {
+                var i = parseInt(el.getAttribute('data-i'), 10);
+                var f = el.getAttribute('data-tf');
+                tiers[i][f] = f === 'threshold' ? (parseInt(el.value, 10) || 0) : el.value;
+              };
+            });
+            host.querySelectorAll('[data-tier-del]').forEach(function (el) {
+              el.onclick = function () {
+                tiers.splice(parseInt(el.getAttribute('data-tier-del'), 10), 1);
+                renderTiers();
+              };
+            });
+          }
+          renderTiers();
+          document.getElementById('pgAddTier').onclick = function () {
+            var lastThreshold = tiers.length ? (tiers[tiers.length - 1].threshold || 0) : 0;
+            tiers.push({ threshold: lastThreshold + 10, couponTitle: '', benefit: '' });
+            renderTiers();
+          };
+        }
+      });
+    });
   }
 
   /* ------------------------------------------------- 매장 관리 (총괄 전용) */

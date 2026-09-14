@@ -1,8 +1,9 @@
 # NFC · QR 쿠폰 도장 앱 (동네 한바퀴)
 
 종이 쿠폰 대신 **스마트폰 NFC 태그 또는 QR 스캔**으로 스탬프를 적립하는 디지털 멤버십 웹앱입니다.
-NFC와 QR은 **똑같은 매장별 URL**(`?store=매장ID`)을 사용합니다. 태그를 탭하거나 QR을 카메라로 스캔하면 그 URL이 열리고, 스탬프가 1개 적립됩니다.
-목표(기본 10개)를 채우면 쿠폰이 **자동 발급**되고, 매장 관리자가 쿠폰을 사용 처리합니다.
+NFC와 QR은 **똑같은 매장별 URL**(`?store=매장ID`)을 사용합니다. 태그를 탭하거나 QR을 카메라로 스캔하면 그 URL이 열리고, 사용자가 참여 중인 프로그램에 스탬프가 적립됩니다.
+매장(관리자)은 여러 종류의 **적립 프로그램(캠페인)**을 만들 수 있고, 사용자는 참여할 프로그램을 선택해 각자 적립판을 채웁니다.
+프로그램의 단계(티어)에 도달하면 해당 쿠폰이 **자동 발급**되고, 매장 관리자가 쿠폰을 사용 처리합니다.
 
 **실제 매장·손님 배포용 버전**입니다. 데이터는 [Supabase](https://supabase.com)(Postgres) 서버에 저장되어
 여러 매장·여러 손님의 기기가 실시간으로 데이터를 공유합니다. 결제·위치 인증·푸시 알림은 범위에서 제외했습니다.
@@ -12,12 +13,28 @@ NFC와 QR은 **똑같은 매장별 URL**(`?store=매장ID`)을 사용합니다. 
 ## 핵심 흐름
 
 ```
-사용자 등록 → 매장 NFC 태그 또는 QR 스캔 → ?store=매장ID URL 접속 → 스탬프 1개 적립
-→ 공동 적립판 확인 → 목표 달성 → 쿠폰 자동 발급 → 쿠폰함 확인
+사용자 등록 → 프로그램 찾기에서 참여할 적립 프로그램 선택
+→ 매장 NFC 태그 또는 QR 스캔 → ?store=매장ID URL 접속 → 참여 중인 프로그램에 스탬프 적립
+→ 내 적립판에서 단계별 진행 확인 → 단계 달성 → 쿠폰 자동 발급 → 쿠폰함 확인
 → 매장에서 쿠폰 제시 → 관리자가 사용 완료 처리
 ```
 
-여러 제휴 매장의 스탬프가 **하나의 공동 적립판**에 함께 모입니다.
+---
+
+## 적립 프로그램(캠페인) 개념
+
+하나의 **프로그램**은 하나의 적립 트랙입니다.
+
+- **범위(scope)**: `single_store`(단일 매장 전용) 또는 `alliance`(여러 제휴 매장 공동적립)
+- **대상 매장**: 프로그램이 인정하는 매장 목록
+- **단계(tiers)**: 누적 개수별 보상 (예: 10개 → 10% 할인, 20개 → 10,000원 할인). 단계는 여러 개 가능하며, 이미 발급된 단계는 재발급되지 않습니다.
+- **반복형 옵션(reset_on_tier)**: 켜두면 단계를 달성할 때마다 초과분만 남기고 카운트를 롤오버해 같은 쿠폰을 반복 발급받을 수 있습니다.
+
+사용자는 "프로그램 찾기" 탭에서 참여할 프로그램을 선택하고, 참여한 프로그램들의 적립판이 "홈"에 카드로 표시됩니다.
+매장에서 스탬프를 찍으면 **그 매장을 포함하면서 사용자가 참여 중인 모든 활성 프로그램**에 동시에 적립됩니다.
+(예: 공동적립 프로그램과 단일 매장 프로그램에 동시 참여 중이면, 해당 매장 방문 한 번으로 두 적립판 모두 채워집니다.)
+
+기본 시드 프로그램 3종: 성수 카페 단골적립(단일 매장, 10/20개 2단계), 동네 한바퀴 공동적립(3개 매장 공동, 10개), 동네 베이커리 스탬프(단일 매장, 10개).
 
 ---
 
@@ -27,8 +44,9 @@ NFC와 QR은 **똑같은 매장별 URL**(`?store=매장ID`)을 사용합니다. 
 
 1. [supabase.com](https://supabase.com) 에서 무료 프로젝트를 생성합니다.
 2. Supabase 대시보드 → **SQL Editor** 에서 [`supabase/schema.sql`](supabase/schema.sql) 파일 전체 내용을 붙여넣고 Run 합니다.
-   - 테이블(매장/사용자/적립/쿠폰/설정), 보안 정책(RLS), 관리자 인증 함수가 모두 생성됩니다.
-   - 기본 매장 3곳과 총괄 관리자 비밀번호(`1234`)가 자동으로 생성됩니다.
+   - 테이블(매장/사용자/적립 프로그램/적립/쿠폰/설정), 보안 정책(RLS), 관리자 인증 함수가 모두 생성됩니다.
+   - 기본 매장 3곳, 기본 적립 프로그램 3종, 총괄 관리자 비밀번호(`1234`)가 자동으로 생성됩니다.
+   - 이미 실행한 적이 있어도 다시 실행하면 최신 함수/테이블로 안전하게 갱신됩니다(idempotent).
 3. Supabase 대시보드 → **Project Settings → API** 에서 `Project URL` 과 `anon public` 키를 복사합니다.
 4. 저장소의 [`supabase-config.js`](supabase-config.js) 파일을 열어 `url` / `anonKey` 값을 붙여넣은 값으로 교체합니다.
 5. 멀티파일 버전을 수정했다면 `node build-standalone.js` 를 실행해 `app-standalone.html` 을 다시 생성합니다.
@@ -131,12 +149,14 @@ NFC 태그가 없어도 **같은 URL을 QR 코드로 만들어** 매장에 붙�
 관리자 로그인은 두 가지 방식을 지원합니다.
 
 - **총괄 관리자** — 모든 매장을 관리. 기본 비밀번호 `1234` (로그인 후 대시보드에서 즉시 변경 권장)
-  - 대시보드(통계·운영 설정), 매장 관리(추가/수정/운영중지/QR/매장별 비밀번호 설정), 전체 적립 내역, 전체 쿠폰 사용 처리, 초기화
+  - 대시보드(통계·운영 설정), **프로그램 관리(신규 — 적립 프로그램 CRUD·참여자/발급 통계)**, 매장 관리(추가/수정/운영중지/QR/매장별 비밀번호 설정), 전체 적립 내역, 전체 쿠폰 사용 처리, 초기화
 - **매장 관리자** — 각 매장 사장님이 총괄 관리자가 설정해준 **매장 전용 비밀번호**로 로그인
   - 내 매장 정보 수정/운영중지, 내 매장 비밀번호 변경, 우리 매장 적립 내역, 쿠폰 사용 처리(자기 매장 기준)만 가능
 
 새 매장을 추가하려면: 총괄 관리자로 로그인 → 매장 관리 → **+ 매장 추가** → 매장 목록에서 **🔑 매장 비밀번호 설정** 으로
 그 매장 사장님에게 알려줄 비밀번호를 만들어 전달하세요.
+
+새 적립 프로그램을 만들려면: 총괄 관리자로 로그인 → **프로그램 관리** → **+ 프로그램 추가** → 이름/범위(단일 매장·공동적립)/대상 매장/단계(개수→쿠폰)를 입력하세요.
 
 비밀번호 검증과 데이터 변경은 전부 Supabase 서버(Postgres 함수)에서 처리되어, 브라우저 콘솔로 값을 조작해도
 서버 쪽 검증을 우회할 수 없습니다.
@@ -146,12 +166,16 @@ NFC 태그가 없어도 **같은 URL을 QR 코드로 만들어** 매장에 붙�
 ## 데이터 구조 (Supabase Postgres, `supabase/schema.sql`)
 
 ```
-stores:       id, name, category, active, admin_password_hash, created_at
-app_users:    id, name, phone_last4, created_at
-stamp_wallet: user_id, current_stamp_count, goal_count, updated_at   // 사용자당 1개 (공동 적립판)
-stamp_events: id, user_id, store_id, stamped_at, stamp_count_after, status
-coupons:      id, user_id, title, benefit, issued_at, expires_at, status, used_at, used_store_id
-app_config:   id(=1), goal_count, cooldown_seconds, coupon_validity_days, master_password_hash
+stores:         id, name, category, active, admin_password_hash, created_at
+app_users:      id, name, phone_last4, created_at
+programs:       id, name, description, scope(single_store|alliance), reset_on_tier, validity_days, active, created_at
+program_stores: program_id, store_id                     // 프로그램이 인정하는 매장 목록
+program_tiers:  id, program_id, threshold, coupon_title, benefit, sort_order
+user_programs:  user_id, program_id, joined_at            // 참여 여부
+program_wallet: user_id, program_id, current_count, issued_tier_thresholds, updated_at  // 프로그램별 적립판
+stamp_events:   id, user_id, store_id, program_id, stamped_at, stamp_count_after, status
+coupons:        id, user_id, program_id, tier_threshold, source_store_id, title, benefit, issued_at, expires_at, status, used_at, used_store_id
+app_config:     id(=1), goal_count, cooldown_seconds, coupon_validity_days, master_password_hash
 ```
 
 모든 테이블은 Row Level Security로 **읽기(SELECT)만 공개**되어 있고, 매장 추가/수정/활성화, 비밀번호 변경,

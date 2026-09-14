@@ -417,6 +417,31 @@ button, input, select { font-family: inherit; }
 
 .spacer-8 { height: 8px; } .spacer-16 { height: 16px; }
 
+/* ---------------------------------------------------------- 적립 프로그램(캠페인) */
+.program-wallet .wallet-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.program-wallet .tt { font-size: 15px; }
+.program-wallet .desc { font-size: 12.5px; color: var(--text-2); margin: 2px 0 10px; }
+.tiers-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.tier-chip {
+  font-size: 12px; font-weight: 700; padding: 6px 10px; border-radius: 999px;
+  background: var(--surface-alt); border: 1px solid var(--line); color: var(--text-2);
+}
+.tier-chip.ready { background: var(--accent-soft); color: var(--accent-strong); border-color: var(--accent); }
+.tier-chip.done { background: #E1F0E4; color: #2C7A43; border-color: #2C7A43; }
+
+.program-card { display: flex; flex-direction: column; gap: 8px; }
+.program-card .stores { font-size: 12px; color: var(--text-2); }
+.program-card .join-row { display: flex; justify-content: flex-end; margin-top: 4px; }
+.program-card .badge.joined { background: #E1F0E4; color: #2C7A43; }
+
+.join-prompt-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 10px 0; border-top: 1px dashed var(--line);
+}
+.join-prompt-row .name { font-size: 13.5px; font-weight: 700; }
+.join-prompt-row .sub { font-size: 12px; color: var(--text-2); }
+
+
 </style>
 </head>
 <body>
@@ -472,9 +497,10 @@ window.SUPABASE_CONFIG = {
   function mapUser(r) { return r && { id: r.id, name: r.name, phoneLast4: r.phone_last4, createdAt: r.created_at }; }
   function mapStore(r) { return r && { id: r.id, name: r.name, category: r.category, active: r.active, createdAt: r.created_at }; }
   function mapWallet(r) { return r && { userId: r.user_id, currentStampCount: r.current_stamp_count, goalCount: r.goal_count, updatedAt: r.updated_at }; }
-  function mapEvent(r) { return r && { id: r.id, userId: r.user_id, storeId: r.store_id, stampedAt: r.stamped_at, stampCountAfter: r.stamp_count_after, status: r.status }; }
-  function mapCoupon(r) { return r && { id: r.id, userId: r.user_id, title: r.title, benefit: r.benefit, issuedAt: r.issued_at, expiresAt: r.expires_at, status: r.status, usedAt: r.used_at, usedStoreId: r.used_store_id }; }
+  function mapEvent(r) { return r && { id: r.id, userId: r.user_id, storeId: r.store_id, stampedAt: r.stamped_at, stampCountAfter: r.stamp_count_after, status: r.status, programId: r.program_id }; }
+  function mapCoupon(r) { return r && { id: r.id, userId: r.user_id, title: r.title, benefit: r.benefit, issuedAt: r.issued_at, expiresAt: r.expires_at, status: r.status, usedAt: r.used_at, usedStoreId: r.used_store_id, programId: r.program_id, tierThreshold: r.tier_threshold, sourceStoreId: r.source_store_id }; }
   function mapConfig(r) { return r && { goalCount: r.goal_count, cooldownSeconds: r.cooldown_seconds, couponValidityDays: r.coupon_validity_days }; }
+  function mapTier(r) { return r && { threshold: r.threshold, couponTitle: r.coupon_title, benefit: r.benefit, sortOrder: r.sort_order }; }
 
   function genericError(context) {
     console.error('[DB] ' + context);
@@ -553,6 +579,88 @@ window.SUPABASE_CONFIG = {
   }
 
   /* ---------------------------------------------------------------------------
+   * 조회 API — 적립 프로그램(캠페인)
+   * ------------------------------------------------------------------------ */
+  async function getPrograms() {
+    var [progRes, storesRes, tiersRes] = await Promise.all([
+      sb.from('programs').select('*').order('created_at', { ascending: true }),
+      sb.from('program_stores').select('*'),
+      sb.from('program_tiers').select('*').order('sort_order', { ascending: true })
+    ]);
+    if (progRes.error) throw progRes.error;
+    var storesByProgram = {};
+    (storesRes.data || []).forEach(function (r) {
+      (storesByProgram[r.program_id] = storesByProgram[r.program_id] || []).push(r.store_id);
+    });
+    var tiersByProgram = {};
+    (tiersRes.data || []).forEach(function (r) {
+      (tiersByProgram[r.program_id] = tiersByProgram[r.program_id] || []).push(mapTier(r));
+    });
+    return (progRes.data || []).map(function (r) {
+      return {
+        id: r.id, name: r.name, description: r.description, scope: r.scope,
+        resetOnTier: r.reset_on_tier, validityDays: r.validity_days, active: r.active,
+        createdAt: r.created_at,
+        storeIds: storesByProgram[r.id] || [],
+        tiers: tiersByProgram[r.id] || []
+      };
+    });
+  }
+
+  async function getProgram(programId) {
+    var all = await getPrograms();
+    return all.filter(function (p) { return p.id === programId; })[0] || null;
+  }
+
+  async function getUserProgramIds(userId) {
+    var res = await sb.from('user_programs').select('program_id').eq('user_id', userId);
+    if (res.error) throw res.error;
+    return (res.data || []).map(function (r) { return r.program_id; });
+  }
+
+  async function getProgramWallets(userId) {
+    var [walletRes, programs] = await Promise.all([
+      sb.from('program_wallet').select('*').eq('user_id', userId),
+      getPrograms()
+    ]);
+    if (walletRes.error) throw walletRes.error;
+    var byId = {};
+    programs.forEach(function (p) { byId[p.id] = p; });
+    return (walletRes.data || []).map(function (w) {
+      var p = byId[w.program_id];
+      return {
+        programId: w.program_id,
+        programName: p ? p.name : '(삭제된 프로그램)',
+        description: p ? p.description : '',
+        scope: p ? p.scope : 'single_store',
+        active: p ? p.active : false,
+        storeIds: p ? p.storeIds : [],
+        tiers: p ? p.tiers : [],
+        currentCount: w.current_count,
+        issuedTierThresholds: w.issued_tier_thresholds || [],
+        updatedAt: w.updated_at
+      };
+    }).filter(function (w) { return !!byId[w.programId]; });
+  }
+
+  async function joinProgram(userId, programId) {
+    var res = await sb.rpc('app_join_program', { p_user_id: userId, p_program_id: programId });
+    if (res.error) return genericError('joinProgram: ' + res.error.message);
+    return res.data;
+  }
+
+  async function getProgramStats(programId) {
+    var [participantsRes, couponsRes] = await Promise.all([
+      sb.from('user_programs').select('*', { count: 'exact', head: true }).eq('program_id', programId),
+      sb.from('coupons').select('*', { count: 'exact', head: true }).eq('program_id', programId)
+    ]);
+    return {
+      participants: participantsRes.count || 0,
+      couponsIssued: couponsRes.count || 0
+    };
+  }
+
+  /* ---------------------------------------------------------------------------
    * 쓰기 API — 사용자 / 적립 (서버 함수(RPC)에서 원자적으로 처리)
    * ------------------------------------------------------------------------ */
   async function createUser(name, phoneLast4) {
@@ -569,8 +677,14 @@ window.SUPABASE_CONFIG = {
     var d = res.data;
     return {
       ok: true, code: d.code, message: d.message,
-      store: mapStore(d.store), wallet: mapWallet(d.wallet),
-      event: mapEvent(d.event), coupon: d.coupon ? mapCoupon(d.coupon) : null
+      store: mapStore(d.store),
+      results: (d.results || []).map(function (r) {
+        return {
+          programId: r.programId, programName: r.programName,
+          currentCount: r.currentCount,
+          coupon: r.coupon ? mapCoupon(r.coupon) : null
+        };
+      })
     };
   }
 
@@ -608,6 +722,34 @@ window.SUPABASE_CONFIG = {
     var res = await sb.rpc('admin_set_store_password', { p_store_id: storeId, p_password: password, p_new_password: newPassword });
     if (res.error) throw new Error(res.error.message || '비밀번호 변경에 실패했습니다.');
     return res.data === true;
+  }
+
+  async function adminCreateProgram(masterPassword, payload) {
+    var res = await sb.rpc('admin_create_program', {
+      p_master_password: masterPassword,
+      p_name: payload.name, p_description: payload.description || '', p_scope: payload.scope,
+      p_store_ids: payload.storeIds, p_tiers: payload.tiers, p_validity_days: payload.validityDays,
+      p_reset_on_tier: !!payload.resetOnTier
+    });
+    if (res.error) return genericError('adminCreateProgram: ' + res.error.message);
+    return res.data;
+  }
+
+  async function adminUpdateProgram(masterPassword, programId, payload) {
+    var res = await sb.rpc('admin_update_program', {
+      p_master_password: masterPassword, p_program_id: programId,
+      p_name: payload.name, p_description: payload.description, p_scope: payload.scope,
+      p_store_ids: payload.storeIds || null, p_tiers: payload.tiers || null,
+      p_validity_days: payload.validityDays, p_reset_on_tier: payload.resetOnTier,
+      p_active: (payload.active != null) ? payload.active : null
+    });
+    if (res.error) return genericError('adminUpdateProgram: ' + res.error.message);
+    return res.data;
+  }
+
+  async function adminSetProgramActive(programId, masterPassword, active) {
+    var res = await sb.rpc('admin_set_program_active', { p_program_id: programId, p_master_password: masterPassword, p_active: active });
+    return !res.error && res.data === true;
   }
 
   async function adminChangeMasterPassword(oldPassword, newPassword) {
@@ -689,6 +831,16 @@ window.SUPABASE_CONFIG = {
     adminUpdateStoreInfo: adminUpdateStoreInfo,
     adminSetStoreActive: adminSetStoreActive,
     adminSetStorePassword: adminSetStorePassword,
+    // 적립 프로그램(캠페인)
+    getPrograms: getPrograms,
+    getProgram: getProgram,
+    getUserProgramIds: getUserProgramIds,
+    getProgramWallets: getProgramWallets,
+    joinProgram: joinProgram,
+    getProgramStats: getProgramStats,
+    adminCreateProgram: adminCreateProgram,
+    adminUpdateProgram: adminUpdateProgram,
+    adminSetProgramActive: adminSetProgramActive,
     // 적립/지갑
     addStamp: addStamp,
     getWallet: getWallet,
@@ -13497,7 +13649,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
         '<div class="hero">' +
           '<div class="big-logo">🎫</div>' +
           '<h1>동네 한바퀴 스탬프</h1>' +
-          '<p>매장에서 NFC를 태그하거나 QR을 스캔하면 스탬프가 쌓이고,<br/>10개를 모으면 쿠폰이 자동 발급돼요.</p>' +
+          '<p>매장에서 NFC를 태그하거나 QR을 스캔하면 참여 중인 적립 프로그램에<br/>스탬프가 쌓이고, 목표를 채우면 쿠폰이 자동 발급돼요.</p>' +
         '</div>' +
         '<div class="card">' +
           '<div class="field">' +
@@ -13548,21 +13700,24 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
       '</header>' +
       '<div class="screen">' +
         '<section class="view" id="view-home"></section>' +
+        '<section class="view" id="view-discover"></section>' +
         '<section class="view" id="view-history"></section>' +
         '<section class="view" id="view-coupons"></section>' +
       '</div>' +
       '<nav class="tabbar">' +
         tabBtn('home', '🏠', '홈') +
+        tabBtn('discover', '🔍', '프로그램 찾기') +
         tabBtn('history', '📜', '적립 내역') +
         tabBtn('coupons', '🎟️', '쿠폰함', availCount) +
       '</nav>';
 
     document.getElementById('btnManage').onclick = openUserMenu;
-    ['home', 'history', 'coupons'].forEach(function (t) {
+    ['home', 'discover', 'history', 'coupons'].forEach(function (t) {
       document.getElementById('tab-' + t).onclick = function () { switchTab(t); };
     });
 
     await renderHome(user);
+    await renderDiscover(user);
     await renderHistory(user);
     await renderCoupons(user);
     switchTab(state.tab);
@@ -13575,7 +13730,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
 
   function switchTab(t) {
     state.tab = t;
-    ['home', 'history', 'coupons'].forEach(function (k) {
+    ['home', 'discover', 'history', 'coupons'].forEach(function (k) {
       var v = document.getElementById('view-' + k);
       var b = document.getElementById('tab-' + k);
       if (v) v.classList.toggle('active', k === t);
@@ -13584,10 +13739,9 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     var scr = document.querySelector('.screen'); if (scr) scr.scrollTop = 0;
   }
 
-  /* ------------------------------------------------- 홈(적립판 + 매장 배너) */
+  /* ------------------------------------------------- 홈(내 적립판 + 매장 배너) */
   async function renderHome(user) {
     var v = document.getElementById('view-home');
-    var wallet = await DB.getWallet(user.id);
     var html = '';
 
     // 매장 접속 배너 (?store=xxx)
@@ -13601,8 +13755,14 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
         '<div class="sub">QR 스캔 또는 NFC 태그로 매장 도장을 적립하세요</div>' +
       '</div>';
 
-    // 적립판
-    html += walletCardHTML(wallet);
+    // 내 적립판 (참여한 프로그램별)
+    var wallets = await DB.getProgramWallets(user.id);
+    html += '<div class="section-title">내 적립판 (' + wallets.length + ')</div>';
+    if (wallets.length === 0) {
+      html += '<div class="card"><div class="empty"><div class="em">🗂️</div>아직 참여한 적립 프로그램이 없어요.<br/>아래 “프로그램 찾기” 탭에서 참여해보세요!</div></div>';
+    } else {
+      wallets.forEach(function (w) { html += programWalletCardHTML(w); });
+    }
 
     // 최근 적립 내역 (요약)
     var recent = (await DB.getStampEvents(user.id)).slice(0, 4);
@@ -13627,26 +13787,82 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     // 도장 받기(QR/NFC) 버튼 연결
     var collectBtn = document.getElementById('btnCollect');
     if (collectBtn) collectBtn.onclick = function () { openCollect(user); };
+    // 매장 배너에서 프로그램 참여 버튼
+    v.querySelectorAll('[data-join]').forEach(function (b) {
+      b.onclick = function () { joinAndRefresh(user, b.getAttribute('data-join'), b); };
+    });
   }
 
-  function walletCardHTML(wallet) {
-    var goal = wallet.goalCount;
-    var cur = wallet.currentStampCount;
-    var pct = Math.min(100, Math.round((cur / goal) * 100));
-    var cells = '';
-    for (var i = 0; i < goal; i++) {
-      var filled = i < cur;
-      cells += '<div class="stamp ' + (filled ? 'filled' : '') + '" data-i="' + i + '"><span class="num">' + (i + 1) + '</span></div>';
-    }
-    return '<div class="card">' +
+  async function joinAndRefresh(user, programId, btn) {
+    if (btn) btn.disabled = true;
+    var res;
+    try { res = await DB.joinProgram(user.id, programId); }
+    catch (e) { toast('네트워크 오류가 발생했어요.', 'err'); if (btn) btn.disabled = false; return; }
+    if (!res.ok) { toast(res.message, 'err'); if (btn) btn.disabled = false; return; }
+    toast('프로그램에 참여했어요!', 'ok');
+    await renderHome(user);
+    await renderDiscover(user);
+  }
+
+  function programWalletCardHTML(w) {
+    var tiers = w.tiers || [];
+    var maxTier = tiers.length ? tiers[tiers.length - 1].threshold : Math.max(w.currentCount, 10);
+    var pct = Math.min(100, Math.round((w.currentCount / maxTier) * 100));
+    var scopeBadge = w.scope === 'alliance' ? '<span class="badge apri">공동적립</span>' : '<span class="badge blue">단일매장</span>';
+    var tiersHTML = tiers.map(function (t) {
+      var done = w.issuedTierThresholds.indexOf(t.threshold) !== -1;
+      var reached = w.currentCount >= t.threshold;
+      return '<div class="tier-chip ' + (done ? 'done' : (reached ? 'ready' : '')) + '">' +
+        (done ? '✅ ' : '') + t.threshold + '개 · ' + esc(t.couponTitle) + '</div>';
+    }).join('');
+    return '<div class="card program-wallet">' +
         '<div class="wallet-head">' +
-          '<div class="count"><b>' + cur + '</b> / ' + goal + '</div>' +
-          '<div class="goal">' + (cur >= goal ? '목표 달성!' : (goal - cur) + '개 남음') + '</div>' +
+          '<div class="tt" style="font-weight:700">' + esc(w.programName) + ' ' + scopeBadge + '</div>' +
+          '<div class="count"><b>' + w.currentCount + '</b>개</div>' +
         '</div>' +
         '<div class="progress"><i style="width:' + pct + '%"></i></div>' +
-        '<div class="stamps" id="stampGrid">' + cells + '</div>' +
-        '<div class="hint" style="margin-top:12px">여러 제휴 매장의 스탬프가 하나의 적립판에 함께 모여요.</div>' +
+        '<div class="tiers-list">' + tiersHTML + '</div>' +
       '</div>';
+  }
+
+  /* ------------------------------------------------- 프로그램 찾기(참여) 화면 */
+  async function renderDiscover(user) {
+    var v = document.getElementById('view-discover');
+    var [programs, joinedIds, stores] = await Promise.all([
+      DB.getPrograms(), DB.getUserProgramIds(user.id), DB.getStores()
+    ]);
+    var storeById = {};
+    stores.forEach(function (s) { storeById[s.id] = s; });
+    var active = programs.filter(function (p) { return p.active; });
+
+    var html = '<div class="section-title">참여 가능한 적립 프로그램 (' + active.length + ')</div>';
+    if (active.length === 0) {
+      html += '<div class="card"><div class="empty"><div class="em">🗂️</div>운영 중인 프로그램이 없어요.</div></div>';
+    } else {
+      active.forEach(function (p) {
+        var joined = joinedIds.indexOf(p.id) !== -1;
+        var storeNames = p.storeIds.map(function (id) { return storeById[id] ? storeById[id].name : id; }).join(', ');
+        var scopeBadge = p.scope === 'alliance' ? '<span class="badge apri">공동적립</span>' : '<span class="badge blue">단일매장</span>';
+        var tiersHTML = p.tiers.map(function (t) { return '<div class="tier-chip">' + t.threshold + '개 · ' + esc(t.couponTitle) + '</div>'; }).join('');
+        html += '<div class="card program-card">' +
+            '<div class="wallet-head">' +
+              '<div class="tt" style="font-weight:700">' + esc(p.name) + ' ' + scopeBadge + (joined ? ' <span class="badge joined">참여 중</span>' : '') + '</div>' +
+            '</div>' +
+            (p.description ? '<div class="desc">' + esc(p.description) + '</div>' : '') +
+            '<div class="stores">대상 매장: ' + esc(storeNames || '-') + '</div>' +
+            '<div class="tiers-list">' + tiersHTML + '</div>' +
+            '<div class="join-row">' +
+              (joined
+                ? '<button class="btn ghost sm" disabled>참여 중</button>'
+                : '<button class="btn accent sm" data-join="' + p.id + '">참여하기</button>') +
+            '</div>' +
+          '</div>';
+      });
+    }
+    v.innerHTML = html;
+    v.querySelectorAll('[data-join]').forEach(function (b) {
+      b.onclick = function () { joinAndRefresh(user, b.getAttribute('data-join'), b); };
+    });
   }
 
   async function storeBannerHTML(user) {
@@ -13665,12 +13881,36 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
         '<div style="color:var(--text-2);font-size:13px">현재 운영이 중지된 매장이라 적립할 수 없어요.</div>' +
       '</div>';
     }
-    return '<div class="card store-banner">' +
+
+    var [programs, joinedIds] = await Promise.all([DB.getPrograms(), DB.getUserProgramIds(user.id)]);
+    var atStore = programs.filter(function (p) { return p.active && p.storeIds.indexOf(store.id) !== -1; });
+    var joinedHere = atStore.filter(function (p) { return joinedIds.indexOf(p.id) !== -1; });
+    var notJoinedHere = atStore.filter(function (p) { return joinedIds.indexOf(p.id) === -1; });
+
+    var html = '<div class="card store-banner">' +
         '<div class="eyebrow">📍 매장 접속 · NFC / QR</div>' +
         '<h2>' + esc(store.name) + '</h2>' +
-        '<div class="cat">' + esc(store.category) + ' · ' + esc(store.id) + '</div>' +
-        '<button class="btn" id="btnStamp">스탬프 적립하기</button>' +
-      '</div>';
+        '<div class="cat">' + esc(store.category) + ' · ' + esc(store.id) + '</div>';
+
+    if (atStore.length === 0) {
+      html += '<div class="hint">이 매장에서 운영 중인 적립 프로그램이 없어요.</div>';
+    } else {
+      if (joinedHere.length > 0) {
+        html += '<button class="btn" id="btnStamp">스탬프 적립하기</button>' +
+          '<div class="hint">참여 중: ' + joinedHere.map(function (p) { return esc(p.name); }).join(', ') + '</div>';
+      }
+      if (notJoinedHere.length > 0) {
+        html += '<div class="section-title" style="margin-top:12px">이 매장의 참여 가능한 프로그램</div>';
+        notJoinedHere.forEach(function (p) {
+          html += '<div class="join-prompt-row">' +
+              '<div><div class="name">' + esc(p.name) + '</div><div class="sub">' + esc(p.description || '') + '</div></div>' +
+              '<button class="btn accent sm" data-join="' + p.id + '">참여하기</button>' +
+            '</div>';
+        });
+      }
+    }
+    html += '</div>';
+    return html;
   }
 
   /* ------------------------------------------------- 스탬프 적립 실행(공통) */
@@ -13686,29 +13926,30 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     catch (e) { toast('네트워크 오류가 발생했어요. 다시 시도해 주세요.', 'err'); state.busy = false; return { ok: false, code: 'ERROR' }; }
 
     if (!res.ok) {
-      toast(res.message, res.code === 'COOLDOWN' ? 'warn' : 'err');
+      toast(res.message, (res.code === 'COOLDOWN' || res.code === 'NO_PROGRAM') ? 'warn' : 'err');
       state.busy = false;
       return res;
     }
 
-    // 적립 성공 → 모든 뷰 갱신 + 마지막 칸 애니메이션
+    // 적립 성공 → 모든 뷰 갱신
     await renderHome(user);
     await renderHistory(user);
     await renderCoupons(user);
-    animateLastStamp(res.wallet, res.coupon);
     await updateCouponBadge(user);
 
-    if (res.coupon) {
+    var issuedCoupons = res.results.filter(function (r) { return r.coupon; }).map(function (r) { return r.coupon; });
+    if (issuedCoupons.length > 0) {
       modal({
         celebrate: true, emoji: '🎉',
-        title: '쿠폰이 발급되었어요!',
-        desc: '스탬프를 모두 채워<br/><b>' + esc(res.coupon.title) + '</b>을 받았어요.<br/>쿠폰함에서 확인하세요.',
+        title: issuedCoupons.length > 1 ? '쿠폰이 ' + issuedCoupons.length + '개 발급되었어요!' : '쿠폰이 발급되었어요!',
+        desc: issuedCoupons.map(function (c) { return '<b>' + esc(c.title) + '</b>'; }).join('<br/>') + '<br/>쿠폰함에서 확인하세요.',
         confirm: '쿠폰함 보기', confirmClass: 'accent',
         cancel: '닫기',
         onConfirm: function () { switchTab('coupons'); }
       });
     } else {
-      toast(res.store.name + ' 도장 적립! 현재 ' + res.wallet.currentStampCount + ' / ' + res.wallet.goalCount, 'ok');
+      var summary = res.results.map(function (r) { return r.programName + ' ' + r.currentCount + '개'; }).join(' · ');
+      toast((res.store.name || '매장') + ' 도장 적립! ' + summary, 'ok');
     }
 
     setTimeout(function () { state.busy = false; }, 400);
@@ -13774,16 +14015,6 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     });
   }
 
-  function animateLastStamp(wallet, coupon) {
-    // 쿠폰 발급으로 0(또는 초과분)으로 초기화된 경우엔 애니메이션 생략
-    var idx = wallet.currentStampCount - 1;
-    if (coupon || idx < 0) return;
-    var grid = document.getElementById('stampGrid');
-    if (!grid) return;
-    var cell = grid.querySelector('[data-i="' + idx + '"]');
-    if (cell) { cell.classList.add('pop'); }
-  }
-
   async function updateCouponBadge(user) {
     var coupons = await DB.getCoupons(user.id);
     var avail = coupons.filter(function (c) { return c.status === 'available'; }).length;
@@ -13817,32 +14048,35 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
   /* ------------------------------------------------- 쿠폰함 화면 */
   async function renderCoupons(user) {
     var v = document.getElementById('view-coupons');
-    var coupons = await DB.getCoupons(user.id); // 사용가능 먼저 정렬됨
+    var [coupons, programs] = await Promise.all([DB.getCoupons(user.id), DB.getPrograms()]);
+    var programById = {};
+    programs.forEach(function (p) { programById[p.id] = p; });
     var avail = coupons.filter(function (c) { return c.status === 'available'; });
     var others = coupons.filter(function (c) { return c.status !== 'available'; });
 
     var html = '';
     html += '<div class="section-title">사용 가능한 쿠폰 (' + avail.length + ')</div>';
     if (avail.length === 0) {
-      html += '<div class="card"><div class="empty"><div class="em">🎟️</div>사용 가능한 쿠폰이 없어요.<br/>스탬프 10개를 모아보세요!</div></div>';
+      html += '<div class="card"><div class="empty"><div class="em">🎟️</div>사용 가능한 쿠폰이 없어요.<br/>프로그램에 참여해 스탬프를 모아보세요!</div></div>';
     } else {
-      avail.forEach(function (c) { html += couponHTML(c); });
+      avail.forEach(function (c) { html += couponHTML(c, programById[c.programId]); });
     }
 
     if (others.length) {
       html += '<div class="section-title" style="margin-top:16px">지난 쿠폰 (' + others.length + ')</div>';
-      others.forEach(function (c) { html += couponHTML(c); });
+      others.forEach(function (c) { html += couponHTML(c, programById[c.programId]); });
     }
     html += '<div class="hint" style="text-align:center;margin-top:14px">쿠폰 사용 처리는 매장 관리자 화면에서만 가능합니다.</div>';
     v.innerHTML = html;
   }
 
-  function couponHTML(c) {
+  function couponHTML(c, program) {
     var statusBadge =
       c.status === 'available' ? '<span class="badge apri">사용 가능</span>' :
       c.status === 'used'      ? '<span class="badge gray">사용 완료</span>' :
                                  '<span class="badge red">기간 만료</span>';
     var usedInfo = c.status === 'used' ? ' · 사용일 ' + fmtDate(c.usedAt) : '';
+    var programInfo = program ? (esc(program.name) + (c.tierThreshold ? ' · ' + c.tierThreshold + '개 달성 보상' : '')) : '';
     return '<div class="coupon ' + c.status + '">' +
         '<div class="top">' +
           '<div class="gift">🎁</div>' +
@@ -13851,6 +14085,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
         '<div class="perf"></div>' +
         '<div class="body">' +
           '<div class="meta">' +
+            (programInfo ? programInfo + '<br/>' : '') +
             '유효기간 ~ ' + fmtDate(c.expiresAt) + usedInfo + '<br/>' +
             '쿠폰번호 <span class="code">' + shortCode(c.id) + '</span>' +
           '</div>' +
@@ -13942,10 +14177,10 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
   'use strict';
 
   var SESS_KEY = 'nfc_admin_session';
-  var TABS_MASTER = ['dashboard', 'stores', 'stamps', 'coupons', 'reset'];
+  var TABS_MASTER = ['dashboard', 'programs', 'stores', 'stamps', 'coupons', 'reset'];
   var TABS_STORE = ['mystore', 'stamps', 'coupons'];
   var TAB_LABELS = {
-    dashboard: '대시보드', stores: '매장 관리', stamps: '적립 내역',
+    dashboard: '대시보드', programs: '프로그램 관리', stores: '매장 관리', stamps: '적립 내역',
     coupons: '쿠폰 관리', reset: '초기화', mystore: '내 매장'
   };
   var state = { tab: null };
@@ -14165,6 +14400,7 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
   async function renderBody() {
     var body = document.getElementById('adminBody');
     if (state.tab === 'dashboard') return renderDashboard(body);
+    if (state.tab === 'programs') return renderPrograms(body);
     if (state.tab === 'stores') return renderStores(body);
     if (state.tab === 'mystore') return renderMyStore(body);
     if (state.tab === 'stamps') return renderStamps(body);
@@ -14227,6 +14463,151 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
   }
   function stat(v, k, apri) {
     return '<div class="stat ' + (apri ? 'apri' : '') + '"><div class="v">' + v + '</div><div class="k">' + k + '</div></div>';
+  }
+
+  /* ------------------------------------------------- 프로그램(캠페인) 관리 (총괄 전용) */
+  async function renderPrograms(body) {
+    var [programs, stores] = await Promise.all([DB.getPrograms(), DB.getStores()]);
+    var storeById = {}; stores.forEach(function (s) { storeById[s.id] = s; });
+    var html = '<button class="btn accent" id="addProgram" style="margin-bottom:12px">+ 프로그램 추가</button>';
+    for (var i = 0; i < programs.length; i++) {
+      var p = programs[i];
+      var stats = await DB.getProgramStats(p.id);
+      var storeNames = p.storeIds.map(function (id) { return storeById[id] ? storeById[id].name : id; }).join(', ');
+      var tiersText = p.tiers.map(function (t) { return t.threshold + '개→' + t.couponTitle; }).join(' / ');
+      html += '<div class="trow">' +
+          '<div class="th"><div class="tt">' + esc(p.name) + '</div>' +
+            (p.active ? '<span class="badge green">운영중</span>' : '<span class="badge gray">중지</span>') + '</div>' +
+          '<div class="kv">' +
+            '<span>범위 <b>' + (p.scope === 'alliance' ? '공동적립' : '단일매장') + '</b></span>' +
+            '<span>대상 매장 <b>' + esc(storeNames || '-') + '</b></span>' +
+            '<span>참여자 <b>' + stats.participants + '</b>명</span>' +
+            '<span>발급 쿠폰 <b>' + stats.couponsIssued + '</b>건</span>' +
+          '</div>' +
+          '<div class="kv"><span>단계 <b>' + esc(tiersText || '-') + '</b></span></div>' +
+          '<div class="acts">' +
+            '<button class="btn secondary sm" data-edit-prog="' + p.id + '">정보 수정</button>' +
+            '<button class="btn ghost sm" data-toggle-prog="' + p.id + '">' + (p.active ? '운영 중지' : '운영 시작') + '</button>' +
+          '</div>' +
+        '</div>';
+    }
+    body.innerHTML = html;
+    document.getElementById('addProgram').onclick = function () { programForm(null); };
+    body.querySelectorAll('[data-edit-prog]').forEach(function (b) {
+      b.onclick = function () {
+        var p = programs.filter(function (x) { return x.id === b.getAttribute('data-edit-prog'); })[0];
+        programForm(p);
+      };
+    });
+    body.querySelectorAll('[data-toggle-prog]').forEach(function (b) {
+      b.onclick = async function () {
+        var id = b.getAttribute('data-toggle-prog');
+        var p = programs.filter(function (x) { return x.id === id; })[0];
+        var ok = await DB.adminSetProgramActive(id, getSession().password, !p.active);
+        if (!ok) { toast('처리에 실패했습니다.', 'err'); return; }
+        toast('운영 상태를 변경했습니다.', 'ok');
+        renderPrograms(body);
+      };
+    });
+  }
+
+  function programForm(program) {
+    var editing = !!program;
+    var tiers = editing
+      ? program.tiers.map(function (t) { return { threshold: t.threshold, couponTitle: t.couponTitle, benefit: t.benefit }; })
+      : [{ threshold: 10, couponTitle: '', benefit: '' }];
+    var selectedStores = editing ? program.storeIds.slice() : [];
+
+    DB.getStores().then(function (stores) {
+      modal({
+        emoji: editing ? '✏️' : '🗂️',
+        title: editing ? '프로그램 수정' : '프로그램 추가',
+        formHTML:
+          '<div style="text-align:left;margin-top:8px">' +
+            '<div class="field"><label>프로그램명</label><input class="input" id="pgName" value="' + (editing ? esc(program.name) : '') + '" placeholder="예: 성수 카페 단골적립" /></div>' +
+            '<div class="field"><label>설명</label><input class="input" id="pgDesc" value="' + (editing ? esc(program.description) : '') + '" placeholder="선택 사항" /></div>' +
+            '<div class="field"><label>범위</label><select class="input" id="pgScope">' +
+              '<option value="single_store"' + ((!editing || program.scope === 'single_store') ? ' selected' : '') + '>단일 매장</option>' +
+              '<option value="alliance"' + (editing && program.scope === 'alliance' ? ' selected' : '') + '>제휴 공동적립</option>' +
+            '</select></div>' +
+            '<div class="field"><label>대상 매장</label><div id="pgStores">' +
+              stores.map(function (s) {
+                var checked = selectedStores.indexOf(s.id) !== -1 ? ' checked' : '';
+                return '<label style="display:flex;align-items:center;gap:8px;padding:6px 0"><input type="checkbox" value="' + esc(s.id) + '"' + checked + ' /> ' + esc(s.name) + '</label>';
+              }).join('') +
+            '</div></div>' +
+            '<div class="field"><label>쿠폰 유효기간(일)</label><input class="input" id="pgValidity" type="number" min="1" value="' + (editing ? program.validityDays : 30) + '" /></div>' +
+            '<div class="field"><label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="pgReset"' + (editing && program.resetOnTier ? ' checked' : '') + ' /> 단계 달성 시 초과분만 남기고 초기화(반복형)</label></div>' +
+            '<div class="field"><label>단계(티어)</label><div id="pgTiers"></div>' +
+              '<button type="button" class="btn ghost sm" id="pgAddTier" style="margin-top:6px">+ 단계 추가</button></div>' +
+          '</div>',
+        confirm: editing ? '저장' : '추가', confirmClass: 'accent', cancel: '취소',
+        onConfirm: async function (close) {
+          var name = document.getElementById('pgName').value;
+          var description = document.getElementById('pgDesc').value;
+          var scope = document.getElementById('pgScope').value;
+          var validityDays = parseInt(document.getElementById('pgValidity').value, 10) || 30;
+          var resetOnTier = document.getElementById('pgReset').checked;
+          var storeIds = Array.prototype.map.call(
+            document.querySelectorAll('#pgStores input[type=checkbox]:checked'),
+            function (el) { return el.value; }
+          );
+          if (!name.trim()) { toast('프로그램명을 입력해 주세요.', 'warn'); return; }
+          if (storeIds.length === 0) { toast('대상 매장을 1곳 이상 선택해 주세요.', 'warn'); return; }
+          if (tiers.length === 0) { toast('단계를 1개 이상 추가해 주세요.', 'warn'); return; }
+          for (var i = 0; i < tiers.length; i++) {
+            if (!tiers[i].threshold || !tiers[i].couponTitle.trim()) { toast('단계 정보를 모두 입력해 주세요.', 'warn'); return; }
+          }
+          var payload = { name: name, description: description, scope: scope, storeIds: storeIds, tiers: tiers, validityDays: validityDays, resetOnTier: resetOnTier };
+          var sess = getSession();
+          if (editing) {
+            payload.active = program.active;
+            var res = await DB.adminUpdateProgram(sess.password, program.id, payload);
+            close();
+            if (!res.ok) { toast(res.message, 'err'); return; }
+            toast('프로그램을 수정했습니다.', 'ok');
+          } else {
+            var res2 = await DB.adminCreateProgram(sess.password, payload);
+            close();
+            if (!res2.ok) { toast(res2.message, 'err'); return; }
+            toast('프로그램을 추가했습니다.', 'ok');
+          }
+          renderPrograms(document.getElementById('adminBody'));
+        },
+        afterOpen: function () {
+          function renderTiers() {
+            var host = document.getElementById('pgTiers');
+            host.innerHTML = tiers.map(function (t, i) {
+              return '<div style="display:flex;gap:6px;margin-bottom:6px">' +
+                '<input class="input" style="flex:0 0 70px" type="number" min="1" placeholder="개수" value="' + (t.threshold || '') + '" data-tf="threshold" data-i="' + i + '" />' +
+                '<input class="input" style="flex:1" placeholder="쿠폰명" value="' + esc(t.couponTitle || '') + '" data-tf="couponTitle" data-i="' + i + '" />' +
+                '<input class="input" style="flex:1" placeholder="혜택 설명" value="' + esc(t.benefit || '') + '" data-tf="benefit" data-i="' + i + '" />' +
+                (tiers.length > 1 ? '<button type="button" class="btn ghost sm" data-tier-del="' + i + '">✕</button>' : '') +
+              '</div>';
+            }).join('');
+            host.querySelectorAll('[data-tf]').forEach(function (el) {
+              el.oninput = function () {
+                var i = parseInt(el.getAttribute('data-i'), 10);
+                var f = el.getAttribute('data-tf');
+                tiers[i][f] = f === 'threshold' ? (parseInt(el.value, 10) || 0) : el.value;
+              };
+            });
+            host.querySelectorAll('[data-tier-del]').forEach(function (el) {
+              el.onclick = function () {
+                tiers.splice(parseInt(el.getAttribute('data-tier-del'), 10), 1);
+                renderTiers();
+              };
+            });
+          }
+          renderTiers();
+          document.getElementById('pgAddTier').onclick = function () {
+            var lastThreshold = tiers.length ? (tiers[tiers.length - 1].threshold || 0) : 0;
+            tiers.push({ threshold: lastThreshold + 10, couponTitle: '', benefit: '' });
+            renderTiers();
+          };
+        }
+      });
+    });
   }
 
   /* ------------------------------------------------- 매장 관리 (총괄 전용) */

@@ -105,7 +105,7 @@
         '<div class="hero">' +
           '<div class="big-logo">🎫</div>' +
           '<h1>동네 한바퀴 스탬프</h1>' +
-          '<p>매장에서 NFC를 태그하거나 QR을 스캔하면 스탬프가 쌓이고,<br/>10개를 모으면 쿠폰이 자동 발급돼요.</p>' +
+          '<p>매장에서 NFC를 태그하거나 QR을 스캔하면 참여 중인 적립 프로그램에<br/>스탬프가 쌓이고, 목표를 채우면 쿠폰이 자동 발급돼요.</p>' +
         '</div>' +
         '<div class="card">' +
           '<div class="field">' +
@@ -156,21 +156,24 @@
       '</header>' +
       '<div class="screen">' +
         '<section class="view" id="view-home"></section>' +
+        '<section class="view" id="view-discover"></section>' +
         '<section class="view" id="view-history"></section>' +
         '<section class="view" id="view-coupons"></section>' +
       '</div>' +
       '<nav class="tabbar">' +
         tabBtn('home', '🏠', '홈') +
+        tabBtn('discover', '🔍', '프로그램 찾기') +
         tabBtn('history', '📜', '적립 내역') +
         tabBtn('coupons', '🎟️', '쿠폰함', availCount) +
       '</nav>';
 
     document.getElementById('btnManage').onclick = openUserMenu;
-    ['home', 'history', 'coupons'].forEach(function (t) {
+    ['home', 'discover', 'history', 'coupons'].forEach(function (t) {
       document.getElementById('tab-' + t).onclick = function () { switchTab(t); };
     });
 
     await renderHome(user);
+    await renderDiscover(user);
     await renderHistory(user);
     await renderCoupons(user);
     switchTab(state.tab);
@@ -183,7 +186,7 @@
 
   function switchTab(t) {
     state.tab = t;
-    ['home', 'history', 'coupons'].forEach(function (k) {
+    ['home', 'discover', 'history', 'coupons'].forEach(function (k) {
       var v = document.getElementById('view-' + k);
       var b = document.getElementById('tab-' + k);
       if (v) v.classList.toggle('active', k === t);
@@ -192,10 +195,9 @@
     var scr = document.querySelector('.screen'); if (scr) scr.scrollTop = 0;
   }
 
-  /* ------------------------------------------------- 홈(적립판 + 매장 배너) */
+  /* ------------------------------------------------- 홈(내 적립판 + 매장 배너) */
   async function renderHome(user) {
     var v = document.getElementById('view-home');
-    var wallet = await DB.getWallet(user.id);
     var html = '';
 
     // 매장 접속 배너 (?store=xxx)
@@ -209,8 +211,14 @@
         '<div class="sub">QR 스캔 또는 NFC 태그로 매장 도장을 적립하세요</div>' +
       '</div>';
 
-    // 적립판
-    html += walletCardHTML(wallet);
+    // 내 적립판 (참여한 프로그램별)
+    var wallets = await DB.getProgramWallets(user.id);
+    html += '<div class="section-title">내 적립판 (' + wallets.length + ')</div>';
+    if (wallets.length === 0) {
+      html += '<div class="card"><div class="empty"><div class="em">🗂️</div>아직 참여한 적립 프로그램이 없어요.<br/>아래 “프로그램 찾기” 탭에서 참여해보세요!</div></div>';
+    } else {
+      wallets.forEach(function (w) { html += programWalletCardHTML(w); });
+    }
 
     // 최근 적립 내역 (요약)
     var recent = (await DB.getStampEvents(user.id)).slice(0, 4);
@@ -235,26 +243,82 @@
     // 도장 받기(QR/NFC) 버튼 연결
     var collectBtn = document.getElementById('btnCollect');
     if (collectBtn) collectBtn.onclick = function () { openCollect(user); };
+    // 매장 배너에서 프로그램 참여 버튼
+    v.querySelectorAll('[data-join]').forEach(function (b) {
+      b.onclick = function () { joinAndRefresh(user, b.getAttribute('data-join'), b); };
+    });
   }
 
-  function walletCardHTML(wallet) {
-    var goal = wallet.goalCount;
-    var cur = wallet.currentStampCount;
-    var pct = Math.min(100, Math.round((cur / goal) * 100));
-    var cells = '';
-    for (var i = 0; i < goal; i++) {
-      var filled = i < cur;
-      cells += '<div class="stamp ' + (filled ? 'filled' : '') + '" data-i="' + i + '"><span class="num">' + (i + 1) + '</span></div>';
-    }
-    return '<div class="card">' +
+  async function joinAndRefresh(user, programId, btn) {
+    if (btn) btn.disabled = true;
+    var res;
+    try { res = await DB.joinProgram(user.id, programId); }
+    catch (e) { toast('네트워크 오류가 발생했어요.', 'err'); if (btn) btn.disabled = false; return; }
+    if (!res.ok) { toast(res.message, 'err'); if (btn) btn.disabled = false; return; }
+    toast('프로그램에 참여했어요!', 'ok');
+    await renderHome(user);
+    await renderDiscover(user);
+  }
+
+  function programWalletCardHTML(w) {
+    var tiers = w.tiers || [];
+    var maxTier = tiers.length ? tiers[tiers.length - 1].threshold : Math.max(w.currentCount, 10);
+    var pct = Math.min(100, Math.round((w.currentCount / maxTier) * 100));
+    var scopeBadge = w.scope === 'alliance' ? '<span class="badge apri">공동적립</span>' : '<span class="badge blue">단일매장</span>';
+    var tiersHTML = tiers.map(function (t) {
+      var done = w.issuedTierThresholds.indexOf(t.threshold) !== -1;
+      var reached = w.currentCount >= t.threshold;
+      return '<div class="tier-chip ' + (done ? 'done' : (reached ? 'ready' : '')) + '">' +
+        (done ? '✅ ' : '') + t.threshold + '개 · ' + esc(t.couponTitle) + '</div>';
+    }).join('');
+    return '<div class="card program-wallet">' +
         '<div class="wallet-head">' +
-          '<div class="count"><b>' + cur + '</b> / ' + goal + '</div>' +
-          '<div class="goal">' + (cur >= goal ? '목표 달성!' : (goal - cur) + '개 남음') + '</div>' +
+          '<div class="tt" style="font-weight:700">' + esc(w.programName) + ' ' + scopeBadge + '</div>' +
+          '<div class="count"><b>' + w.currentCount + '</b>개</div>' +
         '</div>' +
         '<div class="progress"><i style="width:' + pct + '%"></i></div>' +
-        '<div class="stamps" id="stampGrid">' + cells + '</div>' +
-        '<div class="hint" style="margin-top:12px">여러 제휴 매장의 스탬프가 하나의 적립판에 함께 모여요.</div>' +
+        '<div class="tiers-list">' + tiersHTML + '</div>' +
       '</div>';
+  }
+
+  /* ------------------------------------------------- 프로그램 찾기(참여) 화면 */
+  async function renderDiscover(user) {
+    var v = document.getElementById('view-discover');
+    var [programs, joinedIds, stores] = await Promise.all([
+      DB.getPrograms(), DB.getUserProgramIds(user.id), DB.getStores()
+    ]);
+    var storeById = {};
+    stores.forEach(function (s) { storeById[s.id] = s; });
+    var active = programs.filter(function (p) { return p.active; });
+
+    var html = '<div class="section-title">참여 가능한 적립 프로그램 (' + active.length + ')</div>';
+    if (active.length === 0) {
+      html += '<div class="card"><div class="empty"><div class="em">🗂️</div>운영 중인 프로그램이 없어요.</div></div>';
+    } else {
+      active.forEach(function (p) {
+        var joined = joinedIds.indexOf(p.id) !== -1;
+        var storeNames = p.storeIds.map(function (id) { return storeById[id] ? storeById[id].name : id; }).join(', ');
+        var scopeBadge = p.scope === 'alliance' ? '<span class="badge apri">공동적립</span>' : '<span class="badge blue">단일매장</span>';
+        var tiersHTML = p.tiers.map(function (t) { return '<div class="tier-chip">' + t.threshold + '개 · ' + esc(t.couponTitle) + '</div>'; }).join('');
+        html += '<div class="card program-card">' +
+            '<div class="wallet-head">' +
+              '<div class="tt" style="font-weight:700">' + esc(p.name) + ' ' + scopeBadge + (joined ? ' <span class="badge joined">참여 중</span>' : '') + '</div>' +
+            '</div>' +
+            (p.description ? '<div class="desc">' + esc(p.description) + '</div>' : '') +
+            '<div class="stores">대상 매장: ' + esc(storeNames || '-') + '</div>' +
+            '<div class="tiers-list">' + tiersHTML + '</div>' +
+            '<div class="join-row">' +
+              (joined
+                ? '<button class="btn ghost sm" disabled>참여 중</button>'
+                : '<button class="btn accent sm" data-join="' + p.id + '">참여하기</button>') +
+            '</div>' +
+          '</div>';
+      });
+    }
+    v.innerHTML = html;
+    v.querySelectorAll('[data-join]').forEach(function (b) {
+      b.onclick = function () { joinAndRefresh(user, b.getAttribute('data-join'), b); };
+    });
   }
 
   async function storeBannerHTML(user) {
@@ -273,12 +337,36 @@
         '<div style="color:var(--text-2);font-size:13px">현재 운영이 중지된 매장이라 적립할 수 없어요.</div>' +
       '</div>';
     }
-    return '<div class="card store-banner">' +
+
+    var [programs, joinedIds] = await Promise.all([DB.getPrograms(), DB.getUserProgramIds(user.id)]);
+    var atStore = programs.filter(function (p) { return p.active && p.storeIds.indexOf(store.id) !== -1; });
+    var joinedHere = atStore.filter(function (p) { return joinedIds.indexOf(p.id) !== -1; });
+    var notJoinedHere = atStore.filter(function (p) { return joinedIds.indexOf(p.id) === -1; });
+
+    var html = '<div class="card store-banner">' +
         '<div class="eyebrow">📍 매장 접속 · NFC / QR</div>' +
         '<h2>' + esc(store.name) + '</h2>' +
-        '<div class="cat">' + esc(store.category) + ' · ' + esc(store.id) + '</div>' +
-        '<button class="btn" id="btnStamp">스탬프 적립하기</button>' +
-      '</div>';
+        '<div class="cat">' + esc(store.category) + ' · ' + esc(store.id) + '</div>';
+
+    if (atStore.length === 0) {
+      html += '<div class="hint">이 매장에서 운영 중인 적립 프로그램이 없어요.</div>';
+    } else {
+      if (joinedHere.length > 0) {
+        html += '<button class="btn" id="btnStamp">스탬프 적립하기</button>' +
+          '<div class="hint">참여 중: ' + joinedHere.map(function (p) { return esc(p.name); }).join(', ') + '</div>';
+      }
+      if (notJoinedHere.length > 0) {
+        html += '<div class="section-title" style="margin-top:12px">이 매장의 참여 가능한 프로그램</div>';
+        notJoinedHere.forEach(function (p) {
+          html += '<div class="join-prompt-row">' +
+              '<div><div class="name">' + esc(p.name) + '</div><div class="sub">' + esc(p.description || '') + '</div></div>' +
+              '<button class="btn accent sm" data-join="' + p.id + '">참여하기</button>' +
+            '</div>';
+        });
+      }
+    }
+    html += '</div>';
+    return html;
   }
 
   /* ------------------------------------------------- 스탬프 적립 실행(공통) */
@@ -294,29 +382,30 @@
     catch (e) { toast('네트워크 오류가 발생했어요. 다시 시도해 주세요.', 'err'); state.busy = false; return { ok: false, code: 'ERROR' }; }
 
     if (!res.ok) {
-      toast(res.message, res.code === 'COOLDOWN' ? 'warn' : 'err');
+      toast(res.message, (res.code === 'COOLDOWN' || res.code === 'NO_PROGRAM') ? 'warn' : 'err');
       state.busy = false;
       return res;
     }
 
-    // 적립 성공 → 모든 뷰 갱신 + 마지막 칸 애니메이션
+    // 적립 성공 → 모든 뷰 갱신
     await renderHome(user);
     await renderHistory(user);
     await renderCoupons(user);
-    animateLastStamp(res.wallet, res.coupon);
     await updateCouponBadge(user);
 
-    if (res.coupon) {
+    var issuedCoupons = res.results.filter(function (r) { return r.coupon; }).map(function (r) { return r.coupon; });
+    if (issuedCoupons.length > 0) {
       modal({
         celebrate: true, emoji: '🎉',
-        title: '쿠폰이 발급되었어요!',
-        desc: '스탬프를 모두 채워<br/><b>' + esc(res.coupon.title) + '</b>을 받았어요.<br/>쿠폰함에서 확인하세요.',
+        title: issuedCoupons.length > 1 ? '쿠폰이 ' + issuedCoupons.length + '개 발급되었어요!' : '쿠폰이 발급되었어요!',
+        desc: issuedCoupons.map(function (c) { return '<b>' + esc(c.title) + '</b>'; }).join('<br/>') + '<br/>쿠폰함에서 확인하세요.',
         confirm: '쿠폰함 보기', confirmClass: 'accent',
         cancel: '닫기',
         onConfirm: function () { switchTab('coupons'); }
       });
     } else {
-      toast(res.store.name + ' 도장 적립! 현재 ' + res.wallet.currentStampCount + ' / ' + res.wallet.goalCount, 'ok');
+      var summary = res.results.map(function (r) { return r.programName + ' ' + r.currentCount + '개'; }).join(' · ');
+      toast((res.store.name || '매장') + ' 도장 적립! ' + summary, 'ok');
     }
 
     setTimeout(function () { state.busy = false; }, 400);
@@ -382,16 +471,6 @@
     });
   }
 
-  function animateLastStamp(wallet, coupon) {
-    // 쿠폰 발급으로 0(또는 초과분)으로 초기화된 경우엔 애니메이션 생략
-    var idx = wallet.currentStampCount - 1;
-    if (coupon || idx < 0) return;
-    var grid = document.getElementById('stampGrid');
-    if (!grid) return;
-    var cell = grid.querySelector('[data-i="' + idx + '"]');
-    if (cell) { cell.classList.add('pop'); }
-  }
-
   async function updateCouponBadge(user) {
     var coupons = await DB.getCoupons(user.id);
     var avail = coupons.filter(function (c) { return c.status === 'available'; }).length;
@@ -425,32 +504,35 @@
   /* ------------------------------------------------- 쿠폰함 화면 */
   async function renderCoupons(user) {
     var v = document.getElementById('view-coupons');
-    var coupons = await DB.getCoupons(user.id); // 사용가능 먼저 정렬됨
+    var [coupons, programs] = await Promise.all([DB.getCoupons(user.id), DB.getPrograms()]);
+    var programById = {};
+    programs.forEach(function (p) { programById[p.id] = p; });
     var avail = coupons.filter(function (c) { return c.status === 'available'; });
     var others = coupons.filter(function (c) { return c.status !== 'available'; });
 
     var html = '';
     html += '<div class="section-title">사용 가능한 쿠폰 (' + avail.length + ')</div>';
     if (avail.length === 0) {
-      html += '<div class="card"><div class="empty"><div class="em">🎟️</div>사용 가능한 쿠폰이 없어요.<br/>스탬프 10개를 모아보세요!</div></div>';
+      html += '<div class="card"><div class="empty"><div class="em">🎟️</div>사용 가능한 쿠폰이 없어요.<br/>프로그램에 참여해 스탬프를 모아보세요!</div></div>';
     } else {
-      avail.forEach(function (c) { html += couponHTML(c); });
+      avail.forEach(function (c) { html += couponHTML(c, programById[c.programId]); });
     }
 
     if (others.length) {
       html += '<div class="section-title" style="margin-top:16px">지난 쿠폰 (' + others.length + ')</div>';
-      others.forEach(function (c) { html += couponHTML(c); });
+      others.forEach(function (c) { html += couponHTML(c, programById[c.programId]); });
     }
     html += '<div class="hint" style="text-align:center;margin-top:14px">쿠폰 사용 처리는 매장 관리자 화면에서만 가능합니다.</div>';
     v.innerHTML = html;
   }
 
-  function couponHTML(c) {
+  function couponHTML(c, program) {
     var statusBadge =
       c.status === 'available' ? '<span class="badge apri">사용 가능</span>' :
       c.status === 'used'      ? '<span class="badge gray">사용 완료</span>' :
                                  '<span class="badge red">기간 만료</span>';
     var usedInfo = c.status === 'used' ? ' · 사용일 ' + fmtDate(c.usedAt) : '';
+    var programInfo = program ? (esc(program.name) + (c.tierThreshold ? ' · ' + c.tierThreshold + '개 달성 보상' : '')) : '';
     return '<div class="coupon ' + c.status + '">' +
         '<div class="top">' +
           '<div class="gift">🎁</div>' +
@@ -459,6 +541,7 @@
         '<div class="perf"></div>' +
         '<div class="body">' +
           '<div class="meta">' +
+            (programInfo ? programInfo + '<br/>' : '') +
             '유효기간 ~ ' + fmtDate(c.expiresAt) + usedInfo + '<br/>' +
             '쿠폰번호 <span class="code">' + shortCode(c.id) + '</span>' +
           '</div>' +

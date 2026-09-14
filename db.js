@@ -32,9 +32,10 @@
   function mapUser(r) { return r && { id: r.id, name: r.name, phoneLast4: r.phone_last4, createdAt: r.created_at }; }
   function mapStore(r) { return r && { id: r.id, name: r.name, category: r.category, active: r.active, createdAt: r.created_at }; }
   function mapWallet(r) { return r && { userId: r.user_id, currentStampCount: r.current_stamp_count, goalCount: r.goal_count, updatedAt: r.updated_at }; }
-  function mapEvent(r) { return r && { id: r.id, userId: r.user_id, storeId: r.store_id, stampedAt: r.stamped_at, stampCountAfter: r.stamp_count_after, status: r.status }; }
-  function mapCoupon(r) { return r && { id: r.id, userId: r.user_id, title: r.title, benefit: r.benefit, issuedAt: r.issued_at, expiresAt: r.expires_at, status: r.status, usedAt: r.used_at, usedStoreId: r.used_store_id }; }
+  function mapEvent(r) { return r && { id: r.id, userId: r.user_id, storeId: r.store_id, stampedAt: r.stamped_at, stampCountAfter: r.stamp_count_after, status: r.status, programId: r.program_id }; }
+  function mapCoupon(r) { return r && { id: r.id, userId: r.user_id, title: r.title, benefit: r.benefit, issuedAt: r.issued_at, expiresAt: r.expires_at, status: r.status, usedAt: r.used_at, usedStoreId: r.used_store_id, programId: r.program_id, tierThreshold: r.tier_threshold, sourceStoreId: r.source_store_id }; }
   function mapConfig(r) { return r && { goalCount: r.goal_count, cooldownSeconds: r.cooldown_seconds, couponValidityDays: r.coupon_validity_days }; }
+  function mapTier(r) { return r && { threshold: r.threshold, couponTitle: r.coupon_title, benefit: r.benefit, sortOrder: r.sort_order }; }
 
   function genericError(context) {
     console.error('[DB] ' + context);
@@ -113,6 +114,88 @@
   }
 
   /* ---------------------------------------------------------------------------
+   * 조회 API — 적립 프로그램(캠페인)
+   * ------------------------------------------------------------------------ */
+  async function getPrograms() {
+    var [progRes, storesRes, tiersRes] = await Promise.all([
+      sb.from('programs').select('*').order('created_at', { ascending: true }),
+      sb.from('program_stores').select('*'),
+      sb.from('program_tiers').select('*').order('sort_order', { ascending: true })
+    ]);
+    if (progRes.error) throw progRes.error;
+    var storesByProgram = {};
+    (storesRes.data || []).forEach(function (r) {
+      (storesByProgram[r.program_id] = storesByProgram[r.program_id] || []).push(r.store_id);
+    });
+    var tiersByProgram = {};
+    (tiersRes.data || []).forEach(function (r) {
+      (tiersByProgram[r.program_id] = tiersByProgram[r.program_id] || []).push(mapTier(r));
+    });
+    return (progRes.data || []).map(function (r) {
+      return {
+        id: r.id, name: r.name, description: r.description, scope: r.scope,
+        resetOnTier: r.reset_on_tier, validityDays: r.validity_days, active: r.active,
+        createdAt: r.created_at,
+        storeIds: storesByProgram[r.id] || [],
+        tiers: tiersByProgram[r.id] || []
+      };
+    });
+  }
+
+  async function getProgram(programId) {
+    var all = await getPrograms();
+    return all.filter(function (p) { return p.id === programId; })[0] || null;
+  }
+
+  async function getUserProgramIds(userId) {
+    var res = await sb.from('user_programs').select('program_id').eq('user_id', userId);
+    if (res.error) throw res.error;
+    return (res.data || []).map(function (r) { return r.program_id; });
+  }
+
+  async function getProgramWallets(userId) {
+    var [walletRes, programs] = await Promise.all([
+      sb.from('program_wallet').select('*').eq('user_id', userId),
+      getPrograms()
+    ]);
+    if (walletRes.error) throw walletRes.error;
+    var byId = {};
+    programs.forEach(function (p) { byId[p.id] = p; });
+    return (walletRes.data || []).map(function (w) {
+      var p = byId[w.program_id];
+      return {
+        programId: w.program_id,
+        programName: p ? p.name : '(삭제된 프로그램)',
+        description: p ? p.description : '',
+        scope: p ? p.scope : 'single_store',
+        active: p ? p.active : false,
+        storeIds: p ? p.storeIds : [],
+        tiers: p ? p.tiers : [],
+        currentCount: w.current_count,
+        issuedTierThresholds: w.issued_tier_thresholds || [],
+        updatedAt: w.updated_at
+      };
+    }).filter(function (w) { return !!byId[w.programId]; });
+  }
+
+  async function joinProgram(userId, programId) {
+    var res = await sb.rpc('app_join_program', { p_user_id: userId, p_program_id: programId });
+    if (res.error) return genericError('joinProgram: ' + res.error.message);
+    return res.data;
+  }
+
+  async function getProgramStats(programId) {
+    var [participantsRes, couponsRes] = await Promise.all([
+      sb.from('user_programs').select('*', { count: 'exact', head: true }).eq('program_id', programId),
+      sb.from('coupons').select('*', { count: 'exact', head: true }).eq('program_id', programId)
+    ]);
+    return {
+      participants: participantsRes.count || 0,
+      couponsIssued: couponsRes.count || 0
+    };
+  }
+
+  /* ---------------------------------------------------------------------------
    * 쓰기 API — 사용자 / 적립 (서버 함수(RPC)에서 원자적으로 처리)
    * ------------------------------------------------------------------------ */
   async function createUser(name, phoneLast4) {
@@ -129,8 +212,14 @@
     var d = res.data;
     return {
       ok: true, code: d.code, message: d.message,
-      store: mapStore(d.store), wallet: mapWallet(d.wallet),
-      event: mapEvent(d.event), coupon: d.coupon ? mapCoupon(d.coupon) : null
+      store: mapStore(d.store),
+      results: (d.results || []).map(function (r) {
+        return {
+          programId: r.programId, programName: r.programName,
+          currentCount: r.currentCount,
+          coupon: r.coupon ? mapCoupon(r.coupon) : null
+        };
+      })
     };
   }
 
@@ -168,6 +257,34 @@
     var res = await sb.rpc('admin_set_store_password', { p_store_id: storeId, p_password: password, p_new_password: newPassword });
     if (res.error) throw new Error(res.error.message || '비밀번호 변경에 실패했습니다.');
     return res.data === true;
+  }
+
+  async function adminCreateProgram(masterPassword, payload) {
+    var res = await sb.rpc('admin_create_program', {
+      p_master_password: masterPassword,
+      p_name: payload.name, p_description: payload.description || '', p_scope: payload.scope,
+      p_store_ids: payload.storeIds, p_tiers: payload.tiers, p_validity_days: payload.validityDays,
+      p_reset_on_tier: !!payload.resetOnTier
+    });
+    if (res.error) return genericError('adminCreateProgram: ' + res.error.message);
+    return res.data;
+  }
+
+  async function adminUpdateProgram(masterPassword, programId, payload) {
+    var res = await sb.rpc('admin_update_program', {
+      p_master_password: masterPassword, p_program_id: programId,
+      p_name: payload.name, p_description: payload.description, p_scope: payload.scope,
+      p_store_ids: payload.storeIds || null, p_tiers: payload.tiers || null,
+      p_validity_days: payload.validityDays, p_reset_on_tier: payload.resetOnTier,
+      p_active: (payload.active != null) ? payload.active : null
+    });
+    if (res.error) return genericError('adminUpdateProgram: ' + res.error.message);
+    return res.data;
+  }
+
+  async function adminSetProgramActive(programId, masterPassword, active) {
+    var res = await sb.rpc('admin_set_program_active', { p_program_id: programId, p_master_password: masterPassword, p_active: active });
+    return !res.error && res.data === true;
   }
 
   async function adminChangeMasterPassword(oldPassword, newPassword) {
@@ -249,6 +366,16 @@
     adminUpdateStoreInfo: adminUpdateStoreInfo,
     adminSetStoreActive: adminSetStoreActive,
     adminSetStorePassword: adminSetStorePassword,
+    // 적립 프로그램(캠페인)
+    getPrograms: getPrograms,
+    getProgram: getProgram,
+    getUserProgramIds: getUserProgramIds,
+    getProgramWallets: getProgramWallets,
+    joinProgram: joinProgram,
+    getProgramStats: getProgramStats,
+    adminCreateProgram: adminCreateProgram,
+    adminUpdateProgram: adminUpdateProgram,
+    adminSetProgramActive: adminSetProgramActive,
     // 적립/지갑
     addStamp: addStamp,
     getWallet: getWallet,
