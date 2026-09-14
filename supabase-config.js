@@ -5,6 +5,6 @@
  * 실제 접근 제어는 서버(RLS + supabase/schema.sql의 함수)가 담당합니다.
  */
 window.SUPABASE_CONFIG = {
-  url: 'https://YOUR_PROJECT_REF.supabase.co',
-  anonKey: 'YOUR_SUPABASE_ANON_KEY'
+  url: 'https://rkzqlzhcxixoqstajlgn.supabase.co',
+  anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJrenFsemhjeGl4b3FzdGFqbGduIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkxODcwOTUsImV4cCI6MjEwNDc2MzA5NX0.zJ4ZNr125GODOARkOqQyhwMlqmTifCb0WokJpeG6HFM'
 };

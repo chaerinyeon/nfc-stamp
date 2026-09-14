@@ -4,7 +4,7 @@
 -- 여러 번 실행해도 안전하도록 작성되어 있습니다(idempotent).
 -- =============================================================================
 
-create extension if not exists pgcrypto;
+create extension if not exists pgcrypto with schema extensions;
 
 -- -----------------------------------------------------------------------------
 -- 1) 테이블
@@ -111,7 +111,7 @@ grant select on stores, app_users, stamp_wallet, stamp_events, coupons, app_conf
 -- 4) 내부 헬퍼 (직접 호출 권한 부여 안 함 — 다른 함수 내부에서만 사용)
 -- -----------------------------------------------------------------------------
 create or replace function _verify_store_or_master(p_store_id text, p_password text)
-returns boolean language plpgsql security definer set search_path = public as $$
+returns boolean language plpgsql security definer set search_path = public, extensions as $$
 declare v_store stores; v_cfg app_config;
 begin
   select * into v_cfg from app_config where id = 1;
@@ -131,7 +131,7 @@ end; $$;
 -- 5) 사용자 공개 API (고객 화면에서 호출)
 -- -----------------------------------------------------------------------------
 create or replace function app_create_user(p_name text, p_phone_last4 text)
-returns jsonb language plpgsql security definer set search_path = public as $$
+returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 declare
   v_name text := trim(coalesce(p_name, ''));
   v_phone text := regexp_replace(coalesce(p_phone_last4, ''), '\D', '', 'g');
@@ -153,7 +153,7 @@ end; $$;
 grant execute on function app_create_user(text, text) to anon, authenticated;
 
 create or replace function app_add_stamp(p_user_id uuid, p_store_id text)
-returns jsonb language plpgsql security definer set search_path = public as $$
+returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 declare
   v_user app_users;
   v_store stores;
@@ -236,7 +236,7 @@ grant execute on function app_add_stamp(uuid, text) to anon, authenticated;
 -- 6) 관리자 API — 비밀번호 검증은 항상 서버(이 함수들)에서만 수행
 -- -----------------------------------------------------------------------------
 create or replace function admin_login_master(p_password text)
-returns boolean language plpgsql security definer set search_path = public as $$
+returns boolean language plpgsql security definer set search_path = public, extensions as $$
 declare v_cfg app_config;
 begin
   select * into v_cfg from app_config where id = 1;
@@ -246,7 +246,7 @@ end; $$;
 grant execute on function admin_login_master(text) to anon, authenticated;
 
 create or replace function admin_login_store(p_store_id text, p_password text)
-returns boolean language plpgsql security definer set search_path = public as $$
+returns boolean language plpgsql security definer set search_path = public, extensions as $$
 declare v_store stores;
 begin
   select * into v_store from stores where id = p_store_id;
@@ -256,7 +256,7 @@ end; $$;
 grant execute on function admin_login_store(text, text) to anon, authenticated;
 
 create or replace function admin_create_store(p_master_password text, p_id text, p_name text, p_category text)
-returns jsonb language plpgsql security definer set search_path = public as $$
+returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 declare v_id text; v_store stores;
 begin
   if not admin_login_master(p_master_password) then
@@ -277,7 +277,7 @@ end; $$;
 grant execute on function admin_create_store(text, text, text, text) to anon, authenticated;
 
 create or replace function admin_update_store_info(p_store_id text, p_password text, p_name text, p_category text)
-returns boolean language plpgsql security definer set search_path = public as $$
+returns boolean language plpgsql security definer set search_path = public, extensions as $$
 begin
   if not _verify_store_or_master(p_store_id, p_password) then return false; end if;
   update stores set
@@ -289,7 +289,7 @@ end; $$;
 grant execute on function admin_update_store_info(text, text, text, text) to anon, authenticated;
 
 create or replace function admin_set_store_active(p_store_id text, p_password text, p_active boolean)
-returns boolean language plpgsql security definer set search_path = public as $$
+returns boolean language plpgsql security definer set search_path = public, extensions as $$
 begin
   if not _verify_store_or_master(p_store_id, p_password) then return false; end if;
   update stores set active = p_active where id = p_store_id;
@@ -298,7 +298,7 @@ end; $$;
 grant execute on function admin_set_store_active(text, text, boolean) to anon, authenticated;
 
 create or replace function admin_set_store_password(p_store_id text, p_password text, p_new_password text)
-returns boolean language plpgsql security definer set search_path = public as $$
+returns boolean language plpgsql security definer set search_path = public, extensions as $$
 begin
   if not _verify_store_or_master(p_store_id, p_password) then return false; end if;
   if p_new_password is null or length(p_new_password) < 4 then
@@ -310,7 +310,7 @@ end; $$;
 grant execute on function admin_set_store_password(text, text, text) to anon, authenticated;
 
 create or replace function admin_change_master_password(p_old_password text, p_new_password text)
-returns boolean language plpgsql security definer set search_path = public as $$
+returns boolean language plpgsql security definer set search_path = public, extensions as $$
 begin
   if not admin_login_master(p_old_password) then return false; end if;
   if p_new_password is null or length(p_new_password) < 4 then
@@ -322,7 +322,7 @@ end; $$;
 grant execute on function admin_change_master_password(text, text) to anon, authenticated;
 
 create or replace function admin_use_coupon(p_coupon_id uuid, p_store_id text, p_password text)
-returns jsonb language plpgsql security definer set search_path = public as $$
+returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 declare v_coupon coupons;
 begin
   if not _verify_store_or_master(p_store_id, p_password) then
@@ -346,7 +346,7 @@ end; $$;
 grant execute on function admin_use_coupon(uuid, text, text) to anon, authenticated;
 
 create or replace function admin_update_config(p_master_password text, p_goal_count int, p_cooldown_seconds int, p_coupon_validity_days int)
-returns jsonb language plpgsql security definer set search_path = public as $$
+returns jsonb language plpgsql security definer set search_path = public, extensions as $$
 declare v_cfg app_config;
 begin
   if not admin_login_master(p_master_password) then
@@ -363,7 +363,7 @@ end; $$;
 grant execute on function admin_update_config(text, int, int, int) to anon, authenticated;
 
 create or replace function admin_reset_test_data(p_master_password text, p_keep_stores boolean default true)
-returns boolean language plpgsql security definer set search_path = public as $$
+returns boolean language plpgsql security definer set search_path = public, extensions as $$
 begin
   if not admin_login_master(p_master_password) then return false; end if;
   delete from coupons;
@@ -382,7 +382,7 @@ end; $$;
 grant execute on function admin_reset_test_data(text, boolean) to anon, authenticated;
 
 create or replace function admin_factory_reset(p_master_password text)
-returns boolean language plpgsql security definer set search_path = public as $$
+returns boolean language plpgsql security definer set search_path = public, extensions as $$
 begin
   if not admin_login_master(p_master_password) then return false; end if;
   delete from coupons;
