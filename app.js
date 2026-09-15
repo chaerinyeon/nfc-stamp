@@ -200,16 +200,17 @@
     var v = document.getElementById('view-home');
     var html = '';
 
+    // 도장 받기 CTA (QR 스캔 / NFC 태그 선택) — 홈의 메인 액션
+    html += '<div class="card collect-cta hero">' +
+        '<div class="cta-icon">📍</div>' +
+        '<button class="btn" id="btnCollect">도장 받기</button>' +
+        '<div class="sub">QR 스캔 또는 NFC 태그로 매장 도장을 적립하세요</div>' +
+      '</div>';
+
     // 매장 접속 배너 (?store=xxx)
     if (state.storeParam) {
       html += await storeBannerHTML(user);
     }
-
-    // 도장 받기 CTA (QR 스캔 / NFC 태그 선택)
-    html += '<div class="card collect-cta">' +
-        '<button class="btn" id="btnCollect">📍 도장 받기</button>' +
-        '<div class="sub">QR 스캔 또는 NFC 태그로 매장 도장을 적립하세요</div>' +
-      '</div>';
 
     // 내 적립판 (참여한 프로그램별)
     var wallets = await DB.getProgramWallets(user.id);

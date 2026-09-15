@@ -256,16 +256,17 @@ button, input, select { font-family: inherit; }
 .tabbar {
   position: fixed; left: 50%; transform: translateX(-50%); bottom: 0;
   width: 100%; max-width: var(--maxw); z-index: 30;
-  display: grid; grid-template-columns: repeat(3, 1fr);
+  display: grid; grid-template-columns: repeat(4, 1fr);
   background: var(--surface); border-top: 1px solid var(--line);
   padding-bottom: env(safe-area-inset-bottom, 0);
 }
 .tabbar button {
-  border: none; background: none; cursor: pointer;
-  padding: 9px 4px 10px; display: flex; flex-direction: column; align-items: center; gap: 3px;
-  color: var(--text-muted); font-size: 11px; font-weight: 600;
+  border: none; background: none; cursor: pointer; width: 100%;
+  padding: 9px 2px 10px; display: flex; flex-direction: column; align-items: center; gap: 3px;
+  color: var(--text-muted); font-size: 10.5px; font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.tabbar button .ti { font-size: 20px; line-height: 1; }
+.tabbar button .ti { font-size: 19px; line-height: 1; }
 .tabbar button.active { color: var(--primary); }
 .tabbar button .dot {
   position: absolute; top: 6px; margin-left: 16px;
@@ -273,7 +274,7 @@ button, input, select { font-family: inherit; }
   min-width: 16px; height: 16px; border-radius: 999px; padding: 0 4px;
   display: grid; place-items: center;
 }
-.tab-wrap { position: relative; display: grid; }
+.tab-wrap { position: relative; display: grid; min-width: 0; }
 
 /* ---------------------------------------------------------- 토스트 / 모달 */
 .toast-host { position: fixed; left: 0; right: 0; bottom: 84px; z-index: 60; display: flex; flex-direction: column; align-items: center; gap: 8px; pointer-events: none; }
@@ -362,6 +363,16 @@ button, input, select { font-family: inherit; }
 .collect-cta { text-align: center; }
 .collect-cta .btn { font-size: 17px; padding: 17px; }
 .collect-cta .sub { font-size: 12.5px; color: var(--text-2); margin-top: 8px; }
+.collect-cta.hero {
+  background: linear-gradient(135deg, var(--primary), var(--primary-strong));
+  border: none; padding: 28px 20px;
+}
+.collect-cta.hero .cta-icon { font-size: 34px; margin-bottom: 6px; }
+.collect-cta.hero .btn {
+  width: 100%; font-size: 22px; font-weight: 800; padding: 22px;
+  background: #fff; color: var(--primary-strong); box-shadow: 0 6px 18px rgba(0,0,0,.18);
+}
+.collect-cta.hero .sub { color: rgba(255,255,255,.9); margin-top: 12px; font-size: 13px; }
 
 .choice-list { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; }
 .choice-btn {
@@ -13744,16 +13755,17 @@ function findAlignmentPattern(matrix, alignmentPatternQuads, topRight, topLeft, 
     var v = document.getElementById('view-home');
     var html = '';
 
+    // 도장 받기 CTA (QR 스캔 / NFC 태그 선택) — 홈의 메인 액션
+    html += '<div class="card collect-cta hero">' +
+        '<div class="cta-icon">📍</div>' +
+        '<button class="btn" id="btnCollect">도장 받기</button>' +
+        '<div class="sub">QR 스캔 또는 NFC 태그로 매장 도장을 적립하세요</div>' +
+      '</div>';
+
     // 매장 접속 배너 (?store=xxx)
     if (state.storeParam) {
       html += await storeBannerHTML(user);
     }
-
-    // 도장 받기 CTA (QR 스캔 / NFC 태그 선택)
-    html += '<div class="card collect-cta">' +
-        '<button class="btn" id="btnCollect">📍 도장 받기</button>' +
-        '<div class="sub">QR 스캔 또는 NFC 태그로 매장 도장을 적립하세요</div>' +
-      '</div>';
 
     // 내 적립판 (참여한 프로그램별)
     var wallets = await DB.getProgramWallets(user.id);
