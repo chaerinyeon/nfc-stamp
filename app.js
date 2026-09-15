@@ -110,7 +110,7 @@
         '<div class="card">' +
           '<div class="field">' +
             '<label>이름 또는 닉네임</label>' +
-            '<input class="input" id="obName" placeholder="예: 채린" maxlength="20" autocomplete="off" />' +
+            '<input class="input" id="obName" placeholder="이름을 입력하세요" maxlength="20" autocomplete="off" />' +
           '</div>' +
           '<div class="field">' +
             '<label>휴대폰 번호 뒤 4자리</label>' +
